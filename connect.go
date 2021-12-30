@@ -2,9 +2,8 @@ package main
 
 import (
 	"encoding/pem"
-	"io/ioutil"
+	"fmt"
 
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -13,16 +12,12 @@ type connector struct {
 	Auth ssh.AuthMethod
 }
 
-func newConnector(user, privateKeyFile string) (*connector, error) {
-	pemBytes, err := ioutil.ReadFile(privateKeyFile)
-	if err != nil {
-		return nil, err
-	}
-	pemBlock, _ := pem.Decode(pemBytes)
+func newConnector(user, privateKey string) (*connector, error) {
+	pemBlock, _ := pem.Decode([]byte(privateKey))
 	if pemBlock == nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to decode pem block: %s", privateKey)
 	}
-	signer, err := ssh.ParsePrivateKey(pemBytes)
+	signer, err := ssh.ParsePrivateKey([]byte(privateKey))
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +42,6 @@ func exec(client *ssh.Client, command string) (string, error) {
 	}
 	defer session.Close()
 
-	log.Debugf("Running %s", command)
 	out, err := session.CombinedOutput(command)
 	return string(out), err
 }

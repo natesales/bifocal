@@ -1,32 +1,54 @@
 package main
 
 import (
-	"flag"
 	"fmt"
+	"net/smtp"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/kelseyhightower/envconfig"
 	log "github.com/sirupsen/logrus"
 )
 
-var (
-	username   = flag.String("u", "", "SSH username")
-	sshKeyFile = flag.String("k", "", "SSH private key")
-)
+type Config struct {
+	Username string `envconfig:"SSH_USERNAME" required:"true"`
+	SSHKey   string `envconfig:"SSH_KEY" required:"true"`
+
+	SMTPHost       string `envconfig:"SMTP_HOST" required:"true"`
+	SMTPPort       int    `envconfig:"SMTP_PORT" required:"true"`
+	SMTPUsername   string `envconfig:"SMTP_USERNAME" required:"true"`
+	SMTPPassword   string `envconfig:"SMTP_PASSWORD" required:"true"`
+	EmailRecipient string `envconfig:"EMAIL_RECIPIENT" required:"true"`
+
+	Verbose bool `envconfig:"VERBOSE"`
+}
 
 var (
-	digCommand  = "dig +time=5 +tries=1 +nsid CH id.server TXT @ns1v4.packetframe.com"
-	mtrCommand  = "mtr -wz ns1v4.packetframe.com"
-	reNSID      = regexp.MustCompile(`; NSID.*`)
-	reQueryTime = regexp.MustCompile(`;; Query time: (.*)`)
+	// Linker flags
+	version = "dev"
+
+	queryInterval = 5 * time.Second
+	target        = "ns1v4.packetframe.com"
+	digCommand    = "dig +time=5 +tries=1 +nsid CH id.server TXT @" + target
+	mtrCommand    = "mtr -wz " + target
+	reNSID        = regexp.MustCompile(`; NSID.*`)
+	reQueryTime   = regexp.MustCompile(`;; Query time: (.*)`)
 )
 
 func main() {
-	flag.Parse()
+	var c Config
+	err := envconfig.Process("BIFOCAL", &c)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	conn, err := newConnector(*username, *sshKeyFile)
+	if c.Verbose || version == "dev" {
+		log.SetLevel(log.DebugLevel)
+	}
+
+	conn, err := newConnector(c.Username, c.SSHKey)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -56,8 +78,8 @@ func main() {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Run query every 5 minutes
-	queryTicker := time.NewTicker(5 * time.Second)
+	// Run query on queryInterval
+	queryTicker := time.NewTicker(queryInterval)
 	for ; true; <-queryTicker.C { // Tick once at start
 		randNode, err := randomNode(nodes, 100)
 		if err != nil {
@@ -65,18 +87,18 @@ func main() {
 			continue
 		}
 
-		log.Debugf("Connecting to %s", randNode.Hostname)
+		log.Debugf("[%s] Connecting", randNode.Hostname)
 		client, err := conn.connect(randNode.Hostname)
 		if err != nil {
 			log.Warn(err)
 			continue
 		}
 
+		log.Debugf("[%s] Running %s", randNode.Hostname, digCommand)
 		dig, digErr := exec(client, digCommand)
 		if digErr != nil {
 			mtr, mtrErr := exec(client, mtrCommand)
-			fmt.Printf(`
-%s at %s
+			notifyMessage := fmt.Sprintf(`%s at %s
 
 $ %s
 %s
@@ -84,13 +106,34 @@ $ %s
 
 $ %s
 %s
-(%v)`, randNode.Hostname, time.Now().UTC(),
+(%v)
+`, randNode.Hostname, time.Now().UTC(),
 				digCommand,
 				dig,
 				digErr,
 				mtrCommand,
 				mtr,
 				mtrErr)
+
+			log.Info(notifyMessage)
+
+			// Send notification email
+			if err := smtp.SendMail(
+				fmt.Sprintf("%s:%d", c.SMTPHost, c.SMTPPort),
+				smtp.PlainAuth("", c.SMTPUsername, c.SMTPPassword, c.SMTPHost),
+				c.SMTPUsername,
+				[]string{c.EmailRecipient},
+				[]byte(fmt.Sprintf(`To: "%s" <%s>
+From: "%s" <%s>
+Subject: Bifocal Alert
+
+%s`,
+					c.EmailRecipient, c.EmailRecipient, c.SMTPUsername, c.SMTPUsername, notifyMessage,
+				)),
+			); err != nil {
+				log.Warnf("sending email: %s", err)
+			}
+
 			continue
 		}
 
