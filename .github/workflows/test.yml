@@ -24,4 +24,4 @@ jobs:
         run: go get -v -t -d ./...
 
       - name: Build
-        go build
+        run: go build
