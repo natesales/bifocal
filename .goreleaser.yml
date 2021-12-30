@@ -1,0 +1,25 @@
+builds:
+  - id: bifocal
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+dockers:
+  - ids: [ "bifocal" ]
+    image_templates: [ "ghcr.io/natesales/bifocal:{{ .Version }}" ]
+    use: buildx
+    build_flag_templates:
+      - --platform=linux/amd64
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.licenses=AGPL-3.0-only
