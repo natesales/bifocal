@@ -3,9 +3,6 @@ package main
 import (
 	"fmt"
 	"net/smtp"
-	"regexp"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/kelseyhightower/envconfig"
@@ -22,20 +19,13 @@ type Config struct {
 	SMTPPassword   string `envconfig:"SMTP_PASSWORD" required:"true"`
 	EmailRecipient string `envconfig:"EMAIL_RECIPIENT" required:"true"`
 
-	Verbose bool `envconfig:"VERBOSE"`
+	Script   string `envconfig:"SCRIPT" required:"true"`
+	Interval string `envconfig:"INTERVAL" required:"true"`
+	Verbose  bool   `envconfig:"VERBOSE"`
 }
 
-var (
-	// Linker flags
-	version = "dev"
-
-	queryInterval = 5 * time.Second
-	target        = "ns1v4.packetframe.com"
-	digCommand    = "dig +time=5 +tries=1 +nsid CH id.server TXT @" + target
-	mtrCommand    = "mtr -wz " + target
-	reNSID        = regexp.MustCompile(`; NSID.*`)
-	reQueryTime   = regexp.MustCompile(`;; Query time: (.*)`)
-)
+// Linker flags
+var version = "dev"
 
 func main() {
 	var c Config
@@ -47,6 +37,13 @@ func main() {
 	if c.Verbose || version == "dev" {
 		log.SetLevel(log.DebugLevel)
 	}
+
+	interval, err := time.ParseDuration(c.Interval)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Printf("Running bifocal every %s with script %s", interval, c.Script)
 
 	conn, err := newConnector(c.Username, c.SSHKey)
 	if err != nil {
@@ -79,7 +76,7 @@ func main() {
 	}
 
 	// Run query on queryInterval
-	queryTicker := time.NewTicker(queryInterval)
+	queryTicker := time.NewTicker(interval)
 	for ; true; <-queryTicker.C { // Tick once at start
 		randNode, err := randomNode(nodes, 100)
 		if err != nil {
@@ -90,34 +87,14 @@ func main() {
 		log.Debugf("[%s] Connecting", randNode.Hostname)
 		client, err := conn.connect(randNode.Hostname)
 		if err != nil {
-			log.Warn(err)
+			log.Warnf("[%s] Unable to connect: %s", randNode.Hostname, err)
 			continue
 		}
 
-		log.Debugf("[%s] Running %s", randNode.Hostname, digCommand)
-		dig, digErr := exec(client, digCommand)
-		if digErr != nil {
-			mtr, mtrErr := exec(client, mtrCommand)
-			notifyMessage := fmt.Sprintf(`%s at %s
-
-$ %s
-%s
-(%v)
-
-$ %s
-%s
-(%v)
-`, randNode.Hostname, time.Now().UTC(),
-				digCommand,
-				dig,
-				digErr,
-				mtrCommand,
-				mtr,
-				mtrErr)
-
-			log.Info(notifyMessage)
-
-			// Send notification email
+		log.Debugf("[%s] Running query", randNode.Hostname)
+		out, err := exec(client, fmt.Sprintf("sh -c 'curl -sL %s | bash'", c.Script))
+		if err != nil || out != "" {
+			log.Debugf("[%s] Query failed, sending email", randNode.Hostname)
 			if err := smtp.SendMail(
 				fmt.Sprintf("%s:%d", c.SMTPHost, c.SMTPPort),
 				smtp.PlainAuth("", c.SMTPUsername, c.SMTPPassword, c.SMTPHost),
@@ -127,25 +104,19 @@ $ %s
 From: "%s" <%s>
 Subject: Bifocal Alert
 
+%s at %s
+
 %s`,
-					c.EmailRecipient, c.EmailRecipient, c.SMTPUsername, c.SMTPUsername, notifyMessage,
+					c.EmailRecipient, c.EmailRecipient, c.SMTPUsername, c.SMTPUsername, randNode.Hostname, time.Now().UTC(), out,
 				)),
 			); err != nil {
 				log.Warnf("sending email: %s", err)
 			}
 
 			continue
+		} else {
+			log.Debugf("[%s] Query OK", randNode.Hostname)
 		}
-
-		nsid := strings.Split(string(reNSID.Find([]byte(dig))), "\"")[1]
-		queryTime, err := strconv.Atoi(strings.Split(string(reQueryTime.Find([]byte(dig))), " ")[3])
-		if err != nil {
-			log.Warn(err)
-			continue
-		}
-
-		log.Debugf("%s (%s) -> %s in %dms\n", randNode.Hostname, randNode.CountryCode, nsid, queryTime)
-
 		client.Close()
 	}
 }
