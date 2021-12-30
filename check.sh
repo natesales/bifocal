@@ -3,7 +3,7 @@
 # See https://github.com/natesales/bifocal for more information
 
 DIG_COMMAND="dig +time=5 +tries=1 +nsid CH id.server TXT"
-MTR_COMMAND="mtr -wz"
+MTR_COMMAND="mtr --show-ips --report-wide --aslookup"
 TARGET4="66.248.234.2"
 TARGET6="2602:809:3004::2"
 PROMPT="$"
