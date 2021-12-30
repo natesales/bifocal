@@ -10,7 +10,8 @@ PROMPT="$"
 
 dig4=$($DIG_COMMAND @"$TARGET4")
 RESULT=$?
-if ! [ $RESULT -eq 0 ]; then
+mtr4=$($MTR_COMMAND $TARGET6 2>&1)
+if ! [ $RESULT -eq 0 ] && ! [[ "$mtr4" =~ .*"Network is unreachable".* ]]; then
   echo "$PROMPT $DIG_COMMAND @$TARGET4"
   echo "$dig4"
   echo
@@ -20,7 +21,8 @@ fi
 
 dig6=$($DIG_COMMAND @"$TARGET6")
 RESULT=$?
-if ! [ $RESULT -eq 0 ]; then
+mtr6=$($MTR_COMMAND $TARGET6 2>&1)
+if ! [ $RESULT -eq 0 ] && ! [[ "$mtr6" =~ .*"Network is unreachable".* ]]; then
   echo "$PROMPT $DIG_COMMAND @$TARGET6"
   echo "$dig6"
   echo
