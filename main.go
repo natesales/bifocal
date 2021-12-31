@@ -50,7 +50,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	var nodes []Node
+	var (
+		nodes        []Node
+		totalQueries = 0
+	)
 
 	// Update nodes list every 24 hours
 	ringQueryTicker := time.NewTicker(24 * time.Hour)
@@ -63,6 +66,10 @@ func main() {
 			} else {
 				log.Infof("Retreived %d nodes", len(nodes))
 			}
+
+			// Log total queries
+			log.Infof("%d total queries in the last 24 hours", totalQueries)
+			totalQueries = 0
 		}
 	}()
 
@@ -117,6 +124,8 @@ Subject: Bifocal Alert
 		} else {
 			log.Debugf("[%s] Query OK", randNode.Hostname)
 		}
+
+		totalQueries++
 		client.Close()
 	}
 }
